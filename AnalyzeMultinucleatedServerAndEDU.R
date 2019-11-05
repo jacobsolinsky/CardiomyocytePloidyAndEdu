@@ -103,7 +103,7 @@ thisServer = shinyServer(function(input, output, session){
     baseFeret + geom_vline(xintercept=input$FeretMeanX, color="green")+ xlim(input$FeretMinX, input$FeretMaxX)
   )
   output$unnormalizedCellCycle = renderPlot(
-    if(input$plotUnnormalized){
+    if(input$applyCycleIntensityThresh){
       
       ggplot(nuclei, aes(x=intensity, stat(count))) + geom_density() + labs(x="Integrated Intensity", y="Density (AU)")
     }
@@ -123,7 +123,7 @@ thisServer = shinyServer(function(input, output, session){
     }
   )
   output$normalizedCellCycle = renderPlot(
-    if(input$plotNormalized){
+    if(input$normalize){
       
       ggplot(nuclei, aes(x=intensity, stat(count))) + geom_density() + labs(x="Integrated Intensity", y="Density (AU)") +
         geom_vline(xintercept=input$Lower, color="red") +
@@ -134,18 +134,18 @@ thisServer = shinyServer(function(input, output, session){
       ggplot()
     }
   )
-  output$mononucleatedDistrubution = renderPlot(
-    if (input$plotAndSave){
-    ggplot(filter(cmnuclei, nucleiPerCm==1), aes(x=intensity)) + geom_histogram(bins=100, fill="black") + labs(y="Number of nuclei (mononucleated)", x="Estimated ploidy")} else {ggplot()}
-  )
-  output$binucleatedDistribution = renderPlot(
-    if (input$plotAndSave){
-    ggplot(filter(cmnuclei, nucleiPerCm==2), aes(x=intensity)) + geom_histogram(bins=100, fill="black") + labs(y="Number of nuclei (binucleated)", x="Estimated ploidy")} else {ggplot()}
-  )
-  output$ploidyDistributionByNucleation = renderPlot(
-    if (input$plotAndSave){
-    ggplot(filter(cmNucleusPortions, nucleiPerCm %in% c(1,2,3,4,5)), aes(x=as.factor(nucleiPerCm), y=portion)) + geom_col(fill="black") + labs(x="Nuclei per Cardiomyocyte", y="Cardiomyocyte population %") + ylim(0,100)} else {ggplot()}
-  )
+  output$finalPlots = renderPlot({
+    ret = gridExtra::grid.arrange(
+      ggplot(filter(cmnuclei, nucleiPerCm==1), aes(x=intensity)) + geom_histogram(bins=100, fill="black") + labs(y="Number of nuclei (mononucleated)", x="Estimated ploidy"),
+      ggplot(filter(cmnuclei, nucleiPerCm==2), aes(x=intensity)) + geom_histogram(bins=100, fill="black") + labs(y="Number of nuclei (binucleated)", x="Estimated ploidy"),
+      ggplot(filter(cmNucleusPortions, nucleiPerCm %in% c(1,2,3,4,5)), aes(x=as.factor(nucleiPerCm), y=portion)) + geom_col(fill="black") + labs(x="Nuclei per Cardiomyocyte", y="Cardiomyocyte population %") + ylim(0,100),
+      ggplot(filter(cmnucleiCycle, nucleiPerCm==1), aes(x=intensity)) + geom_histogram(bins=100, fill="black") + labs(y="Number of nuclei (mononucleated, cycle+)", x="Estimated ploidy"),
+      ggplot(filter(cmnucleiCycle, nucleiPerCm==2), aes(x=intensity)) + geom_histogram(bins=100, fill="black") + labs(y="Number of nuclei (binucleated, cycle+)", x="Estimated ploidy"),
+      ggplot(cmnucleiCycle, aes(x=intensity)) + geom_histogram(bins=100, fill="black") + labs(y="Number of nuclei (cycle+)", x="Estimated ploidy"),
+      ggplot(filter(cmNucleusCyclePositivePortions, nucleiPerCm %in% c(1,2,3,4,5)), aes(x=as.factor(nucleiPerCm), y=portion)) + geom_col(fill="black") + labs(x="Nuclei per Cardiomyocyte (cycle+)", y="Cardiomyocyte population %") + ylim(0,100)
+    )
+    print(ret)
+  })
   # Insert the right number of plot output objects into the web page
   output$unnormPlots <- renderUI({
     plot_output_list <- lapply(groupSet, function(i) {
@@ -190,30 +190,45 @@ thisServer = shinyServer(function(input, output, session){
     cmnuclei <<- inner_join(filter(nuclei, Min>0), cm, by= c(c("Min" = "Mean"), joins))
     cmNucleusCounts <<- cmnuclei %>% group_by(!!!syms(c("Min", groupSet))) %>% summarize(nucleiPerCm = n())
     cmnuclei <<- inner_join(cmNucleusCounts, cmnuclei, by=c(c("Min"="Min"), joins))
+    cmnucleiCycle = filter(cmnuclei, cyclePositive==T)
     
-    cmNucleusCyclePositivePortions <<- cmnuclei %>% group_by(nucleiPerCm) %>% summarize(portion = 100 * sum(cyclePositive == T) / n())
+    
     ggplot(filter(cmNucleusCyclePositivePortions, nucleiPerCm %in% c(1,2,3,4,5)), aes(x=as.factor(nucleiPerCm), y=portion)) + geom_col(fill="black") + labs(x="Nuclei per Cardiomyocyte", y="Percentage Cycle Positive") + ylim(0,100)
     ggsave(paste(folderName,"cyclePositive.pdf"), width=3, height=3, device="pdf")
-    cmnuclei = filter(cmnuclei, cyclePositive==T)
-    cmNucleusPortions <<- cmNucleusCounts %>% group_by(nucleiPerCm) %>% summarize(portion = 100 * n()/nrow(cmNucleusCounts))
-    cmNucleusFourPortions <<- cmnuclei %>% group_by(nucleiPerCm) %>% summarize(portion = 100 * sum(FourN == T) / n())
+    
+    cmNucleusFourPortionsCycle <<- cmnucleiCycle %>% group_by(nucleiPerCm) %>% summarize(portion = 100 * sum(FourN == T) / n())
+    cmNucleusCyclePositivePortions <<- cmnuclei %>% group_by(nucleiPerCm) %>% summarize(portion = 100 * sum(cyclePositive == T) / n())
+    
     write.csv(cmNucleusPortions, paste(folderName,"cmNucleusPortions.csv"))
     write.csv(cmNucleusFourPortions, paste(folderName,"cmNucleusFourPortions.csv"))
+    
+    write.csv(cmNucleusFourPortionsCycle, paste(folderName,"cmNucleusFourPortionsCycle.csv"))
     write.csv(cmNucleusCyclePositivePortions, paste(folderName,"cmNucleusCyclePositivePortions"))
     
     th = theme_set(theme_bw() + theme(panel.grid.major = element_blank(), 
                                       panel.grid.minor = element_blank(),
                                       text = element_text(size=12),
                                       axis.title = element_text(face="bold")))
-    
     ggplot(filter(cmnuclei, nucleiPerCm==1), aes(x=intensity)) + geom_histogram(bins=100, fill="black") + labs(y="Number of nuclei (mononucleated)", x="Estimated ploidy")
     ggsave(paste(folderName,"mononucPlot.pdf"), width=3, height=3, device="pdf")
+    
     ggplot(filter(cmnuclei, nucleiPerCm==2), aes(x=intensity)) + geom_histogram(bins=100, fill="black") + labs(y="Number of nuclei (binucleated)", x="Estimated ploidy")
     ggsave(paste(folderName,"binucPlot.pdf"), width=3, height=3, device="pdf")
-    ggplot(filter(cmnuclei, cyclePositive==T), aes(x=intensity)) + geom_histogram(bins=100, fill="black") + labs(y="Number of nuclei (cycle Positive)", x="Estimated ploidy")
-    ggsave(paste(folderName,"cyclePositiveDNADistribution.pdf"), width=3, height=3, device="pdf")
+    
     ggplot(filter(cmNucleusPortions, nucleiPerCm %in% c(1,2,3,4,5)), aes(x=as.factor(nucleiPerCm), y=portion)) + geom_col(fill="black") + labs(x="Nuclei per Cardiomyocyte", y="Cardiomyocyte population %") + ylim(0,100)
     ggsave(paste(folderName,"compnucPlot.pdf"), width=3, height=3, device="pdf")
+    
+    ggplot(filter(cmnucleiCycle, nucleiPerCm==1), aes(x=intensity)) + geom_histogram(bins=100, fill="black") + labs(y="Number of nuclei (mononucleated, cycle+)", x="Estimated ploidy")
+    ggsave(paste(folderName,"mononucPlotCycle.pdf"), width=3, height=3, device="pdf")
+    
+    ggplot(filter(cmnucleiCycle, nucleiPerCm==2), aes(x=intensity)) + geom_histogram(bins=100, fill="black") + labs(y="Number of nuclei (binucleated, cycle+)", x="Estimated ploidy")
+    ggsave(paste(folderName,"binucPlotCycle.pdf"), width=3, height=3, device="pdf")
+    
+    ggplot(cmnucleiCycle, aes(x=intensity)) + geom_histogram(bins=100, fill="black") + labs(y="Number of nuclei (cycle+)", x="Estimated ploidy")
+    ggsave(paste(folderName,"cyclePositiveDNADistribution.pdf"), width=3, height=3, device="pdf")
+    
+    ggplot(filter(cmNucleusCyclePositivePortions, nucleiPerCm %in% c(1,2,3,4,5)), aes(x=as.factor(nucleiPerCm), y=portion)) + geom_col(fill="black") + labs(x="Nuclei per Cardiomyocyte (cycle+)", y="Cardiomyocyte population %") + ylim(0,100)
+    ggsave(paste(folderName,"compnucPlotCycle.pdf"), width=3, height=3, device="pdf")
   })
   
   # Call renderPlot for each one. Plots are only actually generated when they
@@ -229,13 +244,13 @@ thisServer = shinyServer(function(input, output, session){
       plotname2 = paste("normPlot", my_i, sep="")
       
       output[[plotname]] <- renderPlot({
-        if(input$plotUnnormalized){
+        if(input$applyCycleIntensityThresh){
         ggplot(nuclei, aes(x=intensity, color=as.factor(eval(parse(text=my_i))), stat(count))) + geom_density() + labs(x="Integrated Intensity",
                                                                                                                     y="Density (AU)",
                                                                                                                     color=my_i)} else {ggplot()}
       })
       output[[plotname2]] <- renderPlot({
-        if(input$plotNormalized){
+        if(input$normalize){
           ggplot(nuclei, aes(x=intensity, color=as.factor(eval(parse(text=my_i))), stat(count))) + geom_density() + labs(x="Ploidy",
                                                                                                                          y="Density (AU)",
                                                                                                                          color=my_i)} else {ggplot()}
@@ -328,23 +343,12 @@ thisUI = fluidPage(
     )
   ),
 fluidRow(actionButton("applyThresholds", "Apply Selected Thresholds?")),
+#Cell Cycle Intensity#----
 fluidRow(conditionalPanel(
   condition = "input.applyThresholds",
-  bsCollapse(bsCollapsePanel("Cell Cycle Stain Intensity Distribution Plot",
+  bsCollapse(open = "Cell Cycle Stain Intensity Distribution Plot",bsCollapsePanel("Cell Cycle Stain Intensity Distribution Plot",
                              column(4,            
                                     actionButton("applyCycleIntensityThresh", "Apply Cell Cycle Intensity Threshold"),
-                                    sliderInput("CellCycleIntensityMeanX", 
-                                                "Cell cycle stain positivity threshold", 
-                                                min = min(nuclei$cycleIntensity),
-                                                max = max(nuclei$cycleIntensity),
-                                                value = max(nuclei$cycleIntensity) / 2)),
-                             column(8,plotOutput("cycleIntensity"))
-  )))),
-fluidRow(conditionalPanel(
-  condition = "input.applyCycleIntensityThresh",
-  bsCollapse(bsCollapsePanel("DNA Integrated Intensity Distribution Plots",
-                             column(4,            
-                                    actionButton("plotUnnormalized", "Plot Intensity Distribution"),
                                     sliderInput("CellCycleIntensityMeanX", 
                                                 "Cell cycle stain positivity threshold", 
                                                 min = min(nuclei$cycleIntensity),
@@ -360,17 +364,22 @@ fluidRow(conditionalPanel(
                                                 min = min(nuclei$cycleIntensity),
                                                 max = max(nuclei$cycleIntensity),
                                                 value = min(nuclei$cycleIntensity))),
+                             column(8,plotOutput("cycleIntensity"))
+  )))),
+fluidRow(conditionalPanel(
+  condition = "input.applyCycleIntensityThresh",
+  bsCollapse(open = "DNA Integrated Intensity Distribution Plots", bsCollapsePanel("DNA Integrated Intensity Distribution Plots",
+                             column(4,
+                                    checkboxInput("normalizeByWell", "Normalize Separately by group?"),
+                                    actionButton("normalize", "Calculate Ploidy")),
                              column(8,
                                     plotOutput("unnormalizedCellCycle"),
                                     uiOutput("unnormPlots"))
   )))),
 fluidRow(conditionalPanel(
-  condition = "input.plotUnnormalized",
-  bsCollapse(bsCollapsePanel("Estimated Ploidy Distribution Plots",
-                             column(4,            
-                                    checkboxInput("normalizeByWell", "Normalize Separately by group?"),
-                                    actionButton("normalize", "Calculate Ploidy"),
-                                    actionButton("plotNormalized", "Plot Estimated Ploidy Distribution"),
+  condition = "input.normalize",
+  bsCollapse(open = "Estimated Ploidy Distribution Plots",bsCollapsePanel("Estimated Ploidy Distribution Plots",
+                             column(4,
                                     actionButton("ploidyNucleationCalculate", "Calculate Cardiomyocyte Ploidy and Nucleation Distributions"),
                                     sliderInput("Lower", 
                                                 "Minimum diploid threshold", 
@@ -397,10 +406,8 @@ fluidRow(conditionalPanel(
   )))),
 fluidRow(conditionalPanel(
   condition = "input.ploidyNucleationCalculate",
-  bsCollapse(bsCollapsePanel("Cell Cycle Stain Intensity Distribution Plot",
-                             column(4,            
-                                    actionButton("plotAndSave", "Plot and Save Into Output Folder")),
-                             column(8,
+  bsCollapse(open = "Final Results",bsCollapsePanel("Final Results",
+                             column(6,
                                     plotOutput("mononucleatedDistrubution"),
                                     plotOutput("binucleatedDistribution"),
                                     plotOutput("ploidyDistributionByNucleation"))
